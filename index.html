@@ -221,6 +221,7 @@ function origenTxt(t) {
 const selEstado = t => `<select class="chip e-${t.estado}" data-c="estado" data-id="${t.id}" aria-label="Estado de la tarea">${opts(ESTADOS, t.estado)}</select>`;
 const fila = t => `<div class="li"><button type="button" class="tt${t.estado === 'completada' ? ' done' : ''}" data-a="abrir" data-id="${t.id}">${esc(t.titulo)}</button>${t.areaId && P(t.areaId) ? `<span class="tag">${esc(nom(t.areaId))}</span>` : ''}${t.prioridad === 'alta' && t.estado !== 'completada' ? '<span class="alta">Alta</span>' : ''}${dueChip(t)}${selEstado(t)}${av(t.responsableId)}</div>`;
 
+function autosize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, 520) + 'px'; }
 function log(t, texto) { store.save({ tipo: 'comentario', tareaId: t.id, autor: yo.id, fecha: ahora(), texto, auto: true }); }
 function crearTarea(d) {
   const t = { tipo: 'tarea', id: uid(), titulo: d.titulo.trim(), descripcion: d.descripcion || '', areaId: d.areaId || '', responsableId: d.responsableId || '', colaboradores: [], estado: 'pendiente', prioridad: d.prioridad || 'media', vence: d.vence || '', campanaId: d.campanaId || '', creadoPor: yo.id, creado: ahora(), origen: d.origen || { tipo: 'interno' }, bloqueo: '' };
@@ -259,7 +260,8 @@ function marcarConvertido(r) { r.estado = r.tipo === 'nota' ? 'con_tarea' : 'con
 /* ---------- estado de interfaz ---------- */
 const movil = () => window.matchMedia ? window.matchMedia('(max-width:860px)').matches : false;
 const F0 = { resp: '', area: '', estado: '', prio: '', camp: '', fecha: '' };
-const ui = { vista: movil() ? 'lista' : 'kanban', grupo: 'estado', f: { ...F0 }, q: '', tab: 'nuevo', tarea: null, foco: null };
+const ui = { vista: movil() ? 'lista' : 'kanban', grupo: 'estado', f: { ...F0 }, q: '', tab: 'nuevo', tarea: null, foco: null, adjuntos: [] };
+const MAX_ADJ = 4 * 1024 * 1024;
 const ruta = () => { const p = (location.hash || '').replace(/^#\/?/, '').split('/'); return SEC.some(s => s[0] === p[0]) || p[0] === 'reunion' ? p : ['inicio']; };
 const filtrosGuardados = () => { try { return JSON.parse(localStorage.getItem(LS_F) || '[]'); } catch (e) { return []; } };
 function presets() {
@@ -297,6 +299,7 @@ ${ui.tarea && P(ui.tarea) ? drawer(P(ui.tarea)) : ''}
 <nav class="navm" aria-label="Secciones">${SEC.map(([id, l]) => `<a class="${on === id ? 'on' : ''}" href="#/${id}">${svg(id)}${l}</a>`).join('')}</nav></div>`;
   if ($('.kan')) $('.kan').scrollLeft = sl;
   if ($('.drawer')) $('.drawer').scrollTop = st;
+  document.querySelectorAll('textarea.auto').forEach(autosize);
   if (ui.foco) { const el = $(ui.foco); if (el) el.focus(); ui.foco = null; }
 }
 
@@ -404,7 +407,7 @@ ${abierta ? `<form class="row" data-s="nota" data-r="${id}" data-t="${tipo}"><in
     const ps = store.all('persona').sort(byNom), as = store.all('area').sort(byNom), cs = store.all('campana').sort(byNom), ts = store.all('tarea');
     return `<h1>Equipo</h1>
 <section class="card"><div class="row between"><h2>Personas</h2><button type="button" class="btn sm" data-a="persona">+ Persona</button></div>
-${ps.map(p => `<div class="li">${av(p.id)}<span class="tt2">${esc(p.nombre)}${p.id === yo.id ? ' (vos)' : ''}${p.email ? `<br><span class="mut">${esc(p.email)}</span>` : ''}</span>${(p.areas || []).filter(P).map(a => `<span class="tag">${esc(nom(a))}</span>`).join('')}<span class="mut">${ts.filter(t => t.responsableId === p.id && t.estado !== 'completada').length} tareas abiertas</span><button type="button" class="btn sec sm" data-a="persona" data-id="${p.id}">Editar</button>${!NUBE && p.id !== yo.id ? `<button type="button" class="btn gh sm" data-a="usarComo" data-id="${p.id}">Usar la app como</button>` : ''}</div>`).join('')}</section>
+${ps.map(p => `<div class="li">${av(p.id)}<span class="tt2">${esc(p.nombre)}${p.id === yo.id ? ' (vos)' : ''}${p.email ? `<br><span class="mut">${esc(p.email)}</span>` : ''}</span>${(p.areas || []).filter(P).map(a => `<span class="tag">${esc(nom(a))}</span>`).join('')}<span class="mut">${ts.filter(t => t.responsableId === p.id && t.estado !== 'completada').length} tareas abiertas</span><button type="button" class="btn sec sm" data-a="persona" data-id="${p.id}">Editar</button>${!NUBE && p.id !== yo.id ? `<button type="button" class="btn gh sm" data-a="usarComo" data-id="${p.id}">Usar la app como</button>` : ''}${p.id !== yo.id ? `<button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="eliminarPersona" data-id="${p.id}">Eliminar</button>` : ''}</div>`).join('')}</section>
 <section class="card"><div class="row between"><h2>Áreas</h2><button type="button" class="btn sm" data-a="area">+ Área</button></div>
 ${as.map(a => `<div class="li"><span class="tt2">${esc(a.nombre)}</span><span class="mut">${ts.filter(t => t.areaId === a.id && t.estado !== 'completada').length} tareas abiertas</span><button type="button" class="btn sec sm" data-a="area" data-id="${a.id}">Editar</button></div>`).join('')}</section>
 <section class="card"><div class="row between"><h2>Campañas</h2><button type="button" class="btn sm" data-a="campana">+ Campaña</button></div>
@@ -414,6 +417,12 @@ ${cs.map(c => `<div class="li"><span class="tt2">${esc(c.nombre)}${c.inicio || c
   }
 };
 
+function adjHtml(list) {
+  if (!list || !list.length) return '';
+  return '<div class="row" style="margin-top:6px">' + list.map(a => /^image\//.test(a.mime)
+    ? `<a href="${a.data}" download="${esc(a.nombre)}" title="${esc(a.nombre)}"><img src="${a.data}" alt="${esc(a.nombre)}" style="width:72px;height:72px;object-fit:cover;border:1px solid var(--g3);border-radius:6px"></a>`
+    : `<a class="tag" style="padding:6px 10px;text-decoration:none" href="${a.data}" download="${esc(a.nombre)}">↓ ${esc(a.nombre)}</a>`).join('') + '</div>';
+}
 function drawer(t) {
   const cs = store.all('comentario').filter(c => c.tareaId === t.id).sort((a, b) => a.fecha.localeCompare(b.fecha));
   const campo = (k, html) => html.replace('<select', `<select data-c="campo" data-k="${k}" data-id="${t.id}"`).replace('<input', `<input data-c="campo" data-k="${k}" data-id="${t.id}"`).replace('<textarea', `<textarea data-c="campo" data-k="${k}" data-id="${t.id}"`);
@@ -429,10 +438,12 @@ ${t.bloqueo ? `<p class="err"><b>Traba:</b> ${esc(t.bloqueo)}</p>` : ''}
 <label class="fld">Vencimiento${campo('vence', `<input class="in" type="date" value="${esc(t.vence)}">`)}</label></div>
 <label class="fld">Campaña${campo('campanaId', `<select class="in">${opts(campO(t.campanaId), t.campanaId, 'Sin campaña')}</select>`)}</label>
 <div class="fld">Colaboradores<div>${store.all('persona').sort(byNom).filter(p => p.id !== t.responsableId).map(p => `<label class="chk"><input type="checkbox" data-c="colab" data-id="${t.id}" value="${p.id}"${(t.colaboradores || []).includes(p.id) ? ' checked' : ''}>${esc(p.nombre)}</label>`).join('') || '<span class="mut">No hay más personas en el equipo.</span>'}</div></div>
-<label class="fld">Descripción${campo('descripcion', `<textarea class="in" placeholder="Detalle, enlaces, lo que haga falta">${esc(t.descripcion)}</textarea>`)}</label>
+<label class="fld">Descripción${campo('descripcion', `<textarea class="in auto" rows="3" placeholder="Detalle, enlaces, lo que haga falta">${esc(t.descripcion)}</textarea>`)}</label>
 <button type="button" class="card row between" style="background:#f5f5f5;border:0;cursor:pointer;text-align:left" data-a="irOrigen" data-id="${t.id}"><span><span class="sec-t">Origen</span><br><b>${esc(origenTxt(t))}</b></span><span aria-hidden="true">›</span></button>
-<section class="col"><h2>Comentarios</h2>${cs.filter(c => !c.auto).map(c => `<div class="row" style="align-items:flex-start;flex-wrap:nowrap">${av(c.autor)}<div><span class="mut">${esc(nom(c.autor))} · ${fHora(c.fecha)}</span><br><span style="white-space:pre-wrap">${esc(c.texto)}</span></div></div>`).join('') || vacio('Sin comentarios todavía.')}
-<form class="row" style="flex-wrap:nowrap" data-s="comentario" data-id="${t.id}"><input class="in" id="coment" name="texto" placeholder="Escribí un comentario" aria-label="Comentario" required><button class="btn">Enviar</button></form></section>
+<section class="col"><h2>Comentarios</h2>${cs.filter(c => !c.auto).map(c => `<div class="row" style="align-items:flex-start;flex-wrap:nowrap">${av(c.autor)}<div style="min-width:0"><span class="mut">${esc(nom(c.autor))} · ${fHora(c.fecha)}</span>${c.texto ? `<br><span style="white-space:pre-wrap">${esc(c.texto)}</span>` : ''}${adjHtml(c.adjuntos)}</div></div>`).join('') || vacio('Sin comentarios todavía.')}
+${ui.adjuntos.length ? `<div class="row">${ui.adjuntos.map((a, i) => `<span class="tag">${esc(a.nombre)} <button type="button" class="x" style="width:20px;height:20px;font-size:16px;vertical-align:middle" data-a="removeAdj" data-i="${i}" aria-label="Quitar ${esc(a.nombre)}">×</button></span>`).join('')}</div>` : ''}
+<form class="col" data-s="comentario" data-id="${t.id}"><div class="row" style="flex-wrap:nowrap"><input class="in" id="coment" name="texto" placeholder="Escribí un comentario" aria-label="Comentario"><button class="btn">Enviar</button></div>
+<label class="btn sec sm" style="align-self:flex-start;display:inline-flex;align-items:center">Adjuntar archivo<input type="file" multiple hidden data-c="adjuntar"></label></form></section>
 <section class="col" style="gap:4px"><h2>Historial</h2>${cs.filter(c => c.auto).reverse().map(c => `<span class="mut">${esc(nom(c.autor))} ${esc(c.texto)} · ${fHora(c.fecha)}</span>`).join('')}
 <span class="mut">Creada por ${esc(nom(t.creadoPor) || 'alguien')} · ${fHora(t.creado)}</span></section>
 <button type="button" class="btn gh sm" style="align-self:flex-start;color:var(--rojo)" data-a="eliminarTarea" data-id="${t.id}">Eliminar tarea</button></aside>`;
@@ -492,8 +503,9 @@ function modalCargar() {
 const acc = {
   cerrarModal(el, e) { if (e.target === el) cerrarModal(); },
   cargar() { modalCargar(); },
-  abrir(el) { ui.tarea = el.dataset.id; render(); },
-  cerrarDrawer() { ui.tarea = null; render(); },
+  abrir(el) { ui.tarea = el.dataset.id; ui.adjuntos = []; render(); },
+  cerrarDrawer() { ui.tarea = null; ui.adjuntos = []; render(); },
+  removeAdj(el) { ui.adjuntos.splice(+el.dataset.i, 1); render(); },
   vista(el) { ui.vista = el.dataset.v; render(); },
   tab(el) { ui.tab = el.dataset.k; render(); },
   preset(el) { ui.f = { ...presets()[el.dataset.i][1] }; render(); },
@@ -545,6 +557,16 @@ const acc = {
     });
   },
   usarComo(el) { yo = P(el.dataset.id); localStorage.setItem(LS_YO, yo.id); render(); aviso('Ahora usás la app como ' + yo.nombre); },
+  eliminarPersona(el) {
+    const id = el.dataset.id, p = P(id); if (!p) return;
+    if (id === yo.id) return aviso('No podés eliminarte a vos misma.');
+    const abiertas = store.all('tarea').filter(t => t.responsableId === id && t.estado !== 'completada');
+    if (abiertas.length) return modal('No se puede eliminar todavía', `<p><b>${esc(p.nombre)}</b> es responsable de ${abiertas.length} ${abiertas.length === 1 ? 'tarea abierta' : 'tareas abiertas'}. Reasignalas o completalas antes de eliminar a la persona.</p>`, () => {}, 'Entendido');
+    if (!confirm('¿Eliminar a ' + p.nombre + ' del equipo? Se la quita como colaboradora y participante. Las tareas completadas y el historial quedan como están.')) return;
+    store.all('tarea').forEach(t => { if ((t.colaboradores || []).includes(id)) { t.colaboradores = t.colaboradores.filter(x => x !== id); store.save(t); } });
+    store.all('reunion').forEach(r => { if ((r.participantes || []).includes(id)) { r.participantes = r.participantes.filter(x => x !== id); store.save(r); } });
+    store.remove(id); aviso('Persona eliminada');
+  },
   area(el) {
     const a = el.dataset.id ? P(el.dataset.id) : null;
     modal(a ? 'Editar área' : 'Nueva área', `<label class="fld">Nombre<input class="in" name="nombre" required maxlength="40" value="${esc(a ? a.nombre : '')}"></label>`, d => { if (!d.nombre.trim()) return false; store.save({ ...(a || { tipo: 'area' }), nombre: d.nombre.trim() }); });
@@ -590,6 +612,18 @@ const cambios = {
     t[k] = k === 'titulo' ? v.trim() : v; store.save(t); log(t, 'cambió ' + ETIQ[k]);
   },
   colab(el) { const t = P(el.dataset.id), s = new Set(t.colaboradores || []); el.checked ? s.add(el.value) : s.delete(el.value); t.colaboradores = [...s]; store.save(t); },
+  adjuntar(el) {
+    const files = [...el.files]; el.value = '';
+    let pend = files.length;
+    if (!pend) return;
+    files.forEach(file => {
+      if (file.size > MAX_ADJ) { aviso(`"${file.name}" pesa más de 4 MB. Subí una versión más liviana o pegá un enlace.`); if (!--pend && ui.tarea) render(); return; }
+      const fr = new FileReader();
+      fr.onload = () => { ui.adjuntos.push({ nombre: file.name, mime: file.type || 'application/octet-stream', data: fr.result }); if (!--pend && ui.tarea) render(); };
+      fr.onerror = () => { aviso('No se pudo leer ' + file.name); if (!--pend && ui.tarea) render(); };
+      fr.readAsDataURL(file);
+    });
+  },
   filtro(el) { ui.f[el.dataset.k] = el.value; render(); },
   grupo(el) { ui.grupo = el.value; render(); },
   buscar(el) { ui.q = el.value.trim(); render(); },
@@ -603,7 +637,7 @@ const cambios = {
 const envios = {
   pedido(f) { const texto = f.elements.texto.value.trim(); if (!texto) return; store.save({ tipo: 'pedido', texto, origenTipo: f.elements.origen.value, estado: 'nuevo', cargadoPor: yo.id, creado: ahora() }); ui.tab = 'nuevo'; ui.foco = '#nuevo-pedido'; },
   nota(f) { const texto = f.elements.texto.value.trim(); if (!texto) return; store.save({ tipo: 'nota', reunionId: f.dataset.r, clase: f.dataset.t, texto, autor: yo.id, estado: 'pendiente', creado: ahora() }); ui.foco = `form[data-s="nota"][data-t="${f.dataset.t}"] input`; },
-  comentario(f) { const texto = f.elements.texto.value.trim(); if (!texto) return; store.save({ tipo: 'comentario', tareaId: f.dataset.id, autor: yo.id, fecha: ahora(), texto, auto: false }); ui.foco = '#coment'; }
+  comentario(f) { const texto = f.elements.texto.value.trim(); const adj = ui.adjuntos.slice(); if (!texto && !adj.length) return; store.save({ tipo: 'comentario', tareaId: f.dataset.id, autor: yo.id, fecha: ahora(), texto, auto: false, adjuntos: adj.length ? adj : undefined }); ui.adjuntos = []; ui.foco = '#coment'; }
 };
 
 document.addEventListener('click', e => { const el = e.target.closest('[data-a]'); if (el && acc[el.dataset.a]) acc[el.dataset.a](el, e); });

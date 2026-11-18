@@ -110,7 +110,7 @@ const CONFIG = {
 /* ======================================= */
 
 const NUBE = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
-const LS = 'amedel_gestion_v1', LS_YO = 'amedel_yo', LS_F = 'amedel_filtros';
+const LS = 'amedel_gestion_v1', LS_YO = 'amedel_yo', LS_F = 'amedel_filtros', LS_VM = 'amedel_menciones_vistas';
 const ESTADOS = [['pendiente','Pendiente'],['proceso','En proceso'],['revision','En revisión'],['bloqueada','Bloqueada'],['completada','Completada']];
 const PRIOS = [['alta','Alta'],['media','Media'],['baja','Baja']];
 const TIPOS_NOTA = [['pedido','Pedidos o acciones'],['observacion','Observaciones'],['paso','Próximos pasos']];
@@ -312,8 +312,14 @@ ${ui.tarea && P(ui.tarea) ? drawer(P(ui.tarea)) : ''}
 }
 
 const vacio = t => `<p class="mut" style="padding:8px 0">${t}</p>`;
+function mencionesVistas() { try { return JSON.parse(localStorage.getItem(LS_VM) || '[]'); } catch (e) { return []; } }
+function misMenciones() {
+  const tag = '@' + (yo.nombre || ''), vis = mencionesVistas();
+  return store.all('comentario').filter(c => !c.auto && c.autor !== yo.id && c.texto && c.texto.includes(tag) && P(c.tareaId) && !vis.includes(c.id)).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+}
 const vistas = {
   inicio() {
+    const men = misMenciones();
     const ts = store.all('tarea'), h = hoy(), c = e => ts.filter(t => t.estado === e).length;
     const hechas = ts.filter(t => t.estado === 'completada' && (t.completada || '') >= addDias(h, -14)).length;
     const mias = ts.filter(t => t.responsableId === yo.id && t.estado !== 'completada').sort(ordT);
@@ -328,6 +334,7 @@ const vistas = {
 <div class="card"><b>${c('pendiente')}</b><span>Pendientes</span></div><div class="card"><b>${c('proceso')}</b><span>En proceso</span></div>
 <div class="card"><b>${c('revision')}</b><span>En revisión</span></div><div class="card${c('bloqueada') ? ' r' : ''}"><b>${c('bloqueada')}</b><span>Bloqueadas</span></div>
 <div class="card v"><b>${hechas}</b><span>Hechas (14 días)</span></div></section>
+${men.length ? `<section class="card col"><h2>Te mencionaron</h2>${men.map(c => `<div class="row between" style="gap:8px"><button type="button" class="tt" style="flex:1" data-a="abrir" data-id="${c.tareaId}"><b>${esc(nom(c.autor))}</b> te mencionó en «${esc(P(c.tareaId).titulo)}»<br><span class="mut" style="font-weight:400">${esc((c.texto || '').slice(0, 90))}${(c.texto || '').length > 90 ? '…' : ''} · ${fHora(c.fecha)}</span></button><button type="button" class="x" data-a="descartarMencion" data-id="${c.id}" aria-label="Marcar como visto">×</button></div>`).join('')}</section>` : ''}
 <div class="grid2"><div class="col" style="gap:20px">
 <section class="card"><div class="row between" style="margin-bottom:8px"><h2>Mis tareas</h2><a href="#/tareas" class="mut">Ver todas</a></div>${mias.map(fila).join('') || vacio('No tenés tareas abiertas.')}</section>
 <section class="card"><h2 style="margin-bottom:8px">Próximos vencimientos · 7 días</h2>${prox.map(fila).join('') || vacio('Nada vence en los próximos 7 días.')}</section></div>
@@ -420,7 +427,7 @@ ${abierta ? `<form class="row" data-s="nota" data-r="${id}" data-t="${tipo}"><in
 <section class="card"><div class="row between"><h2>Personas</h2><button type="button" class="btn sm" data-a="persona">+ Persona</button></div>
 ${ps.map(p => `<div class="li">${av(p.id)}<span class="tt2">${esc(p.nombre)}${p.id === yo.id ? ' (vos)' : ''}${p.email ? `<br><span class="mut">${esc(p.email)}</span>` : ''}</span>${(p.areas || []).filter(P).map(a => `<span class="tag">${esc(nom(a))}</span>`).join('')}<span class="mut">${ts.filter(t => t.responsableId === p.id && t.estado !== 'completada').length} tareas abiertas</span><button type="button" class="btn sec sm" data-a="persona" data-id="${p.id}">Editar</button>${!NUBE && p.id !== yo.id ? `<button type="button" class="btn gh sm" data-a="usarComo" data-id="${p.id}">Usar la app como</button>` : ''}${p.id !== yo.id ? `<button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="eliminarPersona" data-id="${p.id}">Eliminar</button>` : ''}</div>`).join('')}</section>
 <section class="card"><div class="row between"><h2>Áreas</h2><button type="button" class="btn sm" data-a="area">+ Área</button></div>
-${as.map(a => `<div class="li"><span class="tt2">${esc(a.nombre)}</span><span class="mut">${ts.filter(t => t.areaId === a.id && t.estado !== 'completada').length} tareas abiertas</span><button type="button" class="btn sec sm" data-a="area" data-id="${a.id}">Editar</button></div>`).join('')}</section>
+${as.map(a => `<div class="li"><span class="tt2">${esc(a.nombre)}</span><span class="mut">${ts.filter(t => t.areaId === a.id && t.estado !== 'completada').length} tareas abiertas</span><button type="button" class="btn sec sm" data-a="area" data-id="${a.id}">Editar</button><button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="eliminarArea" data-id="${a.id}">Eliminar</button></div>`).join('')}</section>
 <section class="card"><div class="row between"><h2>Campañas</h2><button type="button" class="btn sm" data-a="campana">+ Campaña</button></div>
 ${cs.map(c => `<div class="li"><span class="tt2">${esc(c.nombre)}${c.inicio || c.fin ? `<br><span class="mut">${fFecha(c.inicio)}${c.fin ? ' al ' + fFecha(c.fin) : ''}</span>` : ''}</span><span class="tag">${c.estado === 'cerrada' ? 'Cerrada' : 'Activa'}</span><button type="button" class="btn sec sm" data-a="campana" data-id="${c.id}">Editar</button></div>`).join('') || vacio('Todavía no hay campañas.')}</section>
 <section class="card col"><h2>Copia de seguridad</h2><p class="mut">${NUBE ? 'Los datos están en Supabase y se comparten con el equipo.' : 'Modo local: los datos están solo en este navegador. Exportá una copia cada tanto.'}</p>
@@ -595,6 +602,15 @@ const acc = {
     store.all('tarea').forEach(t => { if ((t.colaboradores || []).includes(id)) { t.colaboradores = t.colaboradores.filter(x => x !== id); store.save(t); } });
     store.all('reunion').forEach(r => { if ((r.participantes || []).includes(id)) { r.participantes = r.participantes.filter(x => x !== id); store.save(r); } });
     store.remove(id); aviso('Persona eliminada');
+  },
+  descartarMencion(el) { const v = mencionesVistas(); if (!v.includes(el.dataset.id)) { v.push(el.dataset.id); localStorage.setItem(LS_VM, JSON.stringify(v)); } render(); },
+  eliminarArea(el) {
+    const id = el.dataset.id, a = P(id); if (!a) return;
+    const uso = store.all('tarea').filter(t => t.areaId === id).length;
+    if (!confirm('¿Eliminar el área "' + a.nombre + '"?' + (uso ? ' ' + uso + (uso === 1 ? ' tarea queda' : ' tareas quedan') + ' sin área.' : ''))) return;
+    store.all('tarea').forEach(t => { if (t.areaId === id) { t.areaId = ''; store.save(t); } });
+    store.all('persona').forEach(pp => { if ((pp.areas || []).includes(id)) { pp.areas = pp.areas.filter(x => x !== id); store.save(pp); } });
+    store.remove(id); aviso('Área eliminada');
   },
   area(el) {
     const a = el.dataset.id ? P(el.dataset.id) : null;

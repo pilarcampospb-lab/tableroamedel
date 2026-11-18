@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0a0a">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Amedel">
 <title>Gestión Amedel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700&display=swap" rel="stylesheet">
@@ -313,9 +320,15 @@ ${ui.tarea && P(ui.tarea) ? drawer(P(ui.tarea)) : ''}
 
 const vacio = t => `<p class="mut" style="padding:8px 0">${t}</p>`;
 function mencionesVistas() { try { return JSON.parse(localStorage.getItem(LS_VM) || '[]'); } catch (e) { return []; } }
+const norm = x => (x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 function misMenciones() {
-  const tag = '@' + (yo.nombre || ''), vis = mencionesVistas();
-  return store.all('comentario').filter(c => !c.auto && c.autor !== yo.id && c.texto && c.texto.includes(tag) && P(c.tareaId) && !vis.includes(c.id)).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  const vis = mencionesVistas(), nombre = norm(yo.nombre), first = nombre.split(/\s+/)[0];
+  const toks = [...new Set([nombre, first].filter(t => t && t.length >= 2))];
+  return store.all('comentario').filter(c => {
+    if (c.auto || c.autor === yo.id || !c.texto || !P(c.tareaId) || vis.includes(c.id)) return false;
+    const t = norm(c.texto);
+    return toks.some(tok => t.includes('@' + tok));
+  }).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
 }
 const vistas = {
   inicio() {
@@ -748,6 +761,7 @@ async function iniciar() {
     pantalla(`<h2 style="font-size:18px">No se pudo iniciar</h2><p class="err">${esc(e.message || e)}</p><p class="mut">Revisá los datos de CONFIG y que hayas corrido el archivo supabase.sql.</p>`);
   }
 }
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 iniciar();
 </script>
 </body>

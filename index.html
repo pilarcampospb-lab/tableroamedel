@@ -113,8 +113,11 @@ const NUBE = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
 const LS = 'amedel_gestion_v1', LS_YO = 'amedel_yo', LS_F = 'amedel_filtros';
 const ESTADOS = [['pendiente','Pendiente'],['proceso','En proceso'],['revision','En revisión'],['bloqueada','Bloqueada'],['completada','Completada']];
 const PRIOS = [['alta','Alta'],['media','Media'],['baja','Baja']];
-const TIPOS_NOTA = [['tema','Temas'],['pedido','Pedidos'],['acuerdo','Acuerdos'],['observacion','Observaciones'],['paso','Próximos pasos']];
-const TABS_P = [['nuevo','Nuevos'],['evaluacion','En evaluación'],['convertido','Convertidos'],['descartado','Descartados']];
+const TIPOS_NOTA = [['pedido','Pedidos o acciones'],['observacion','Observaciones'],['paso','Próximos pasos']];
+const SEG = [['pendiente','Pendiente'],['progreso','En progreso'],['completado','Completado']];
+const segLabel = x => (SEG.find(y => y[0] === (x || 'pendiente')) || ['', 'Pendiente'])[1];
+const segCls = x => x === 'completado' ? 'e-completada' : x === 'progreso' ? 'e-proceso' : '';
+const TABS_P = [['nuevo','Nuevos'],['evaluacion','En progreso'],['convertido','Convertidos'],['descartado','Descartados']];
 const ICO = {
   inicio:'M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z',
   tareas:'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
@@ -202,7 +205,7 @@ const campO = sel => store.all('campana').filter(c => c.estado !== 'cerrada' || 
 const PR = { alta: 0, media: 1, baja: 2 };
 const ordT = (a, b) => (a.vence || '9999').localeCompare(b.vence || '9999') || PR[a.prioridad] - PR[b.prioridad] || a.titulo.localeCompare(b.titulo);
 const tareasDe = id => store.all('tarea').filter(t => t.origen && t.origen.id === id);
-const pendNotas = rid => store.all('nota').filter(n => n.reunionId === rid && n.estado === 'pendiente').length;
+const pendNotas = rid => store.all('nota').filter(n => n.reunionId === rid && (n.seguimiento || 'pendiente') !== 'completado').length;
 
 function dueChip(t) {
   if (!t.vence) return '';
@@ -222,6 +225,14 @@ const selEstado = t => `<select class="chip e-${t.estado}" data-c="estado" data-
 const fila = t => `<div class="li"><button type="button" class="tt${t.estado === 'completada' ? ' done' : ''}" data-a="abrir" data-id="${t.id}">${esc(t.titulo)}</button>${t.areaId && P(t.areaId) ? `<span class="tag">${esc(nom(t.areaId))}</span>` : ''}${t.prioridad === 'alta' && t.estado !== 'completada' ? '<span class="alta">Alta</span>' : ''}${dueChip(t)}${selEstado(t)}${av(t.responsableId)}</div>`;
 
 function autosize(el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, 520) + 'px'; }
+function linky(raw) {
+  let out = esc(raw);
+  store.all('persona').slice().sort((a, b) => (b.nombre || '').length - (a.nombre || '').length).forEach(pe => {
+    const n = esc(pe.nombre || ''); if (!n) return;
+    out = out.split('@' + n).join('<span style="font-weight:600;background:#f0f0f0;border-radius:4px;padding:0 3px">@' + n + '</span>');
+  });
+  return out.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener" style="text-decoration:underline">$1</a>');
+}
 function log(t, texto) { store.save({ tipo: 'comentario', tareaId: t.id, autor: yo.id, fecha: ahora(), texto, auto: true }); }
 function crearTarea(d) {
   const t = { tipo: 'tarea', id: uid(), titulo: d.titulo.trim(), descripcion: d.descripcion || '', areaId: d.areaId || '', responsableId: d.responsableId || '', colaboradores: [], estado: 'pendiente', prioridad: d.prioridad || 'media', vence: d.vence || '', campanaId: d.campanaId || '', creadoPor: yo.id, creado: ahora(), origen: d.origen || { tipo: 'interno' }, bloqueo: '' };
@@ -249,13 +260,10 @@ function cambiarEstado(t, nuevo) {
   aplicarEstado(t, nuevo);
 }
 function bandeja() {
-  return [
-    ...store.all('pedido').map(p => ({ r: p, estado: p.estado, fecha: p.creado })),
-    ...store.all('nota').filter(n => n.clase === 'pedido').map(n => ({ r: n, estado: n.estado === 'pendiente' ? 'nuevo' : n.estado === 'con_tarea' ? 'convertido' : 'descartado', fecha: n.creado }))
-  ].sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  return store.all('pedido').map(p => ({ r: p, estado: p.estado, fecha: p.creado })).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
 }
 const sinResolver = () => bandeja().filter(x => x.estado === 'nuevo' || x.estado === 'evaluacion');
-function marcarConvertido(r) { r.estado = r.tipo === 'nota' ? 'con_tarea' : 'convertido'; store.save(r); }
+function marcarConvertido(r) { if (r.tipo === 'pedido') { r.estado = 'convertido'; store.save(r); } }
 
 /* ---------- estado de interfaz ---------- */
 const movil = () => window.matchMedia ? window.matchMedia('(max-width:860px)').matches : false;
@@ -366,23 +374,25 @@ ${ui.vista === 'lista' ? `<label class="row mut" style="gap:6px">Agrupar por<sel
 
   pedidos() {
     const todo = bandeja(), lista = todo.filter(x => x.estado === ui.tab);
-    return `<div><h1>Pedidos</h1><p class="mut" style="font-size:14px">Todo lo que todavía no es tarea: pedidos sueltos y pedidos anotados en una minuta.</p></div>
+    return `<div><h1>Pedidos</h1><p class="mut" style="font-size:14px">Todo lo que todavía no es tarea. Convertilos en tarea, divididos en varias o descartalos.</p></div>
 <form class="card row" style="border-color:var(--n);padding:8px" data-s="pedido"><input class="in" style="flex:1 1 240px;width:auto;border:0" name="texto" id="nuevo-pedido" placeholder="Escribí el pedido en una línea y apretá Enter" aria-label="Nuevo pedido" required>
 <select class="in" style="width:auto" name="origen" aria-label="Origen"><option value="cliente">Pedido del cliente</option><option value="interno">Iniciativa interna</option></select><button class="btn">Cargar</button></form>
 <div class="tabs" role="tablist">${TABS_P.map(([k, l]) => `<button type="button" role="tab" aria-selected="${ui.tab === k}" class="tab${ui.tab === k ? ' on' : ''}" data-a="tab" data-k="${k}">${l} · ${todo.filter(x => x.estado === k).length}</button>`).join('')}</div>
 <div class="col">${lista.map(x => {
-      const r = x.r, esNota = r.tipo === 'nota', reu = esNota && P(r.reunionId), tg = tareasDe(r.id);
+      const r = x.r, tg = tareasDe(r.id);
       const acciones = x.estado === 'nuevo' || x.estado === 'evaluacion'
-        ? `${x.estado === 'nuevo' && !esNota ? `<button type="button" class="btn sec sm" data-a="evaluar" data-id="${r.id}">Pasar a evaluación</button>` : ''}<button type="button" class="btn sm" data-a="convertir" data-id="${r.id}">Convertir en tarea</button><button type="button" class="btn sec sm" data-a="dividir" data-id="${r.id}">Dividir en varias</button><button type="button" class="btn gh sm" data-a="descartar" data-id="${r.id}">${esNota ? 'Sin acción' : 'Descartar'}</button>`
-        : x.estado === 'descartado' ? `<button type="button" class="btn gh sm" data-a="reabrir" data-id="${r.id}">Reabrir</button>` : `<button type="button" class="btn sec sm" data-a="convertir" data-id="${r.id}">+ Otra tarea</button>`;
-      return `<article class="card row"><div class="col" style="flex:1 1 320px;gap:4px;min-width:0"><span class="mut">${esNota ? `Nota de minuta${reu ? ` · <a href="#/reunion/${reu.id}">Reunión ${fFecha(reu.fecha)}</a>` : ''}` : r.origenTipo === 'interno' ? 'Iniciativa interna' : 'Pedido del cliente'} · cargó ${esc(nom(esNota ? r.autor : r.cargadoPor) || 'alguien')} · ${fHora(r.creado)}</span>
-<span style="font-size:15px;font-weight:600">${esc(r.texto)}</span>${r.motivo ? `<span class="mut">Motivo: ${esc(r.motivo)}</span>` : ''}
-${tg.length ? `<span class="mut">Generó: ${tg.map(t => `<button type="button" class="btn gh sm" style="min-height:28px" data-a="abrir" data-id="${t.id}">${esc(t.titulo)}</button>`).join(' ')}</span>` : ''}</div><div class="row">${acciones}</div></article>`;
+        ? `${x.estado === 'nuevo' ? `<button type="button" class="btn sec sm" data-a="evaluar" data-id="${r.id}">Pasar a en progreso</button>` : ''}<button type="button" class="btn sm" data-a="convertir" data-id="${r.id}">Convertir en tarea</button><button type="button" class="btn sec sm" data-a="dividir" data-id="${r.id}">Dividir en varias</button><button type="button" class="btn gh sm" data-a="descartar" data-id="${r.id}">Descartar</button><button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="borrarPedido" data-id="${r.id}">Borrar</button>`
+        : x.estado === 'descartado' ? `<button type="button" class="btn gh sm" data-a="reabrir" data-id="${r.id}">Reabrir</button><button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="borrarPedido" data-id="${r.id}">Borrar</button>` : `<button type="button" class="btn sec sm" data-a="convertir" data-id="${r.id}">+ Otra tarea</button><button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="borrarPedido" data-id="${r.id}">Borrar</button>`;
+      return `<article class="card col" style="gap:8px"><div class="row between" style="gap:8px"><span class="mut">${r.origenTipo === 'interno' ? 'Iniciativa interna' : 'Pedido del cliente'} · cargó ${esc(nom(r.cargadoPor) || 'alguien')} · ${fHora(r.creado)}</span></div>
+<span style="font-size:15px;font-weight:600">${esc(r.texto)}</span>
+<textarea class="in auto" rows="1" data-c="pedidoCampo" data-k="descripcion" data-id="${r.id}" placeholder="Agregar una descripción del pedido…">${esc(r.descripcion || '')}</textarea>
+${r.motivo ? `<span class="mut">Motivo: ${esc(r.motivo)}</span>` : ''}
+${tg.length ? `<span class="mut">Generó: ${tg.map(t => `<button type="button" class="btn gh sm" style="min-height:28px" data-a="abrir" data-id="${t.id}">${esc(t.titulo)}</button>`).join(' ')}</span>` : ''}<div class="row">${acciones}</div></article>`;
     }).join('') || `<div class="card">${vacio('No hay pedidos en esta pestaña.')}</div>`}</div>`;
   },
 
   reuniones() {
-    const h = hoy(), rs = store.all('reunion'), item = r => { const n = pendNotas(r.id); return `<a class="card row between" style="text-decoration:none" href="#/reunion/${r.id}"><span><b>${fFecha(r.fecha)}</b>${r.motivo ? ' · ' + esc(r.motivo) : ''}</span><span class="row"><span class="tag">${r.estado === 'cerrada' ? 'Cerrada' : 'Borrador'}</span>${n ? `<span class="warn">${n} sin resolver</span>` : ''}</span></a>`; };
+    const h = hoy(), rs = store.all('reunion'), item = r => { const n = pendNotas(r.id); return `<a class="card row between" style="text-decoration:none" href="#/reunion/${r.id}"><span><b>${fFecha(r.fecha)}</b>${r.motivo ? ' · ' + esc(r.motivo) : ''}</span><span class="row"><span class="tag">${r.estado === 'cerrada' ? 'Cerrada' : 'Borrador'}</span>${n ? `<span class="warn">${n} sin completar</span>` : ''}</span></a>`; };
     const prox = rs.filter(r => r.fecha >= h).sort((a, b) => a.fecha.localeCompare(b.fecha)), pas = rs.filter(r => r.fecha < h).sort((a, b) => b.fecha.localeCompare(a.fecha));
     return `<div class="row between"><h1>Reuniones</h1><button type="button" class="btn" data-a="nuevaReunion">+ Reunión</button></div>
 <h2 class="sec-t">Hoy y próximas</h2><div class="col">${prox.map(item).join('') || vacio('No hay reuniones agendadas.')}</div>
@@ -395,12 +405,13 @@ ${tg.length ? `<span class="mut">Generó: ${tg.map(t => `<button type="button" c
     const otras = store.all('reunion').filter(x => x.id !== id && x.estado !== 'cerrada');
     return `<div class="row between"><div class="col" style="gap:4px"><a href="#/reuniones" class="mut">Reuniones</a><h1>Reunión ${fFecha(r.fecha)}${r.motivo ? ' · ' + esc(r.motivo) : ''}</h1>
 <div class="row mut"><span class="tag">${abierta ? 'Borrador' : 'Cerrada'}</span>${(r.participantes || []).filter(P).length ? `<span>Participantes: ${(r.participantes || []).filter(P).map(p => esc(nom(p))).join(', ')}</span>` : ''}${r.campanaId && P(r.campanaId) ? `<span>Campaña: ${esc(nom(r.campanaId))}</span>` : ''}</div></div>
-<div class="row">${pen ? `<span class="warn">${pen} ${pen === 1 ? 'nota' : 'notas'} sin resolver</span>` : ''}${abierta ? `<button type="button" class="btn" data-a="cerrarMinuta" data-id="${id}" ${pen ? 'disabled title="Resolvé las notas pendientes para cerrar"' : ''}>Cerrar minuta</button>` : `<button type="button" class="btn sec" data-a="reabrirMinuta" data-id="${id}">Reabrir</button>`}<button type="button" class="btn gh sm" data-a="editarReunion" data-id="${id}">Editar</button></div></div>
+<div class="row">${pen ? `<span class="warn">${pen} sin completar</span>` : `<span class="tag" style="color:var(--verde);border-color:var(--verde)">Todo al día</span>`}<button type="button" class="btn sec" data-a="descargarMinuta" data-id="${id}">Descargar PDF</button>${abierta ? `<button type="button" class="btn gh sm" data-a="cerrarMinuta" data-id="${id}">Cerrar minuta</button>` : `<button type="button" class="btn sec" data-a="reabrirMinuta" data-id="${id}">Reabrir</button>`}<button type="button" class="btn gh sm" data-a="editarReunion" data-id="${id}">Editar</button></div></div>
 ${TIPOS_NOTA.map(([tipo, titulo]) => `<section class="col" style="gap:8px"><h2 class="sec-t">${titulo}</h2>
-${notas.filter(n => n.clase === tipo).map(n => { const tg = tareasDe(n.id); return `<article class="card row" style="padding:12px 16px"><div class="col" style="flex:1 1 280px;gap:3px;min-width:0"><span>${esc(n.texto)}</span><span class="mut">${esc(nom(n.autor))}${tg.length ? ' · Tareas: ' + tg.map(t => `<button type="button" class="btn gh sm" style="min-height:28px" data-a="abrir" data-id="${t.id}">${esc(t.titulo)}</button>`).join(' ') : ''}</span></div>
-<span class="chip ${n.estado === 'con_tarea' ? 'e-revision' : n.estado === 'sin_accion' ? 'e-completada' : ''}">${n.estado === 'con_tarea' ? 'Con tarea' : n.estado === 'sin_accion' ? 'Sin acción' : 'Pendiente'}</span>
-<div class="row">${n.estado === 'pendiente' ? `<button type="button" class="btn sm" data-a="convertir" data-id="${n.id}">Crear tarea</button><button type="button" class="btn sec sm" data-a="descartar" data-id="${n.id}">Sin acción</button>${otras.length ? `<button type="button" class="btn gh sm" data-a="moverNota" data-id="${n.id}">Pasar a otra reunión</button>` : ''}<button type="button" class="btn gh sm" data-a="borrarNota" data-id="${n.id}">Borrar</button>` : n.estado === 'con_tarea' ? `<button type="button" class="btn sec sm" data-a="convertir" data-id="${n.id}">+ Otra tarea</button>` : `<button type="button" class="btn gh sm" data-a="reabrir" data-id="${n.id}">Volver a pendiente</button>`}</div></article>`; }).join('')}
-${abierta ? `<form class="row" data-s="nota" data-r="${id}" data-t="${tipo}"><input class="in" style="flex:1 1 220px;width:auto" name="texto" placeholder="Agregar a ${titulo.toLowerCase()} y apretar Enter" aria-label="Agregar nota en ${titulo}" required><button class="btn sec sm">Agregar</button></form>` : ''}</section>`).join('')}`;
+${notas.filter(n => n.clase === tipo).map(n => { const tg = tareasDe(n.id); return `<article class="card col" style="padding:12px 16px;gap:8px"><div class="row between" style="gap:8px"><span style="flex:1 1 240px;font-weight:600;min-width:0">${esc(n.texto)}</span><select class="chip ${segCls(n.seguimiento)}" data-c="notaCampo" data-k="seguimiento" data-id="${n.id}" aria-label="Estado de seguimiento">${opts(SEG, n.seguimiento || 'pendiente')}</select></div>
+<textarea class="in auto" rows="1" data-c="notaCampo" data-k="descripcion" data-id="${n.id}" placeholder="Agregar una descripción…">${esc(n.descripcion || '')}</textarea>
+<div class="row between" style="gap:8px"><span class="mut">${esc(nom(n.autor))}${tg.length ? ' · Tareas: ' + tg.map(t => `<button type="button" class="btn gh sm" style="min-height:28px" data-a="abrir" data-id="${t.id}">${esc(t.titulo)}</button>`).join(' ') : ''}</span>
+<span class="row"><button type="button" class="btn sm" data-a="convertir" data-id="${n.id}">Crear tarea</button>${otras.length ? `<button type="button" class="btn gh sm" data-a="moverNota" data-id="${n.id}">Mover</button>` : ''}<button type="button" class="btn gh sm" style="color:var(--rojo)" data-a="borrarNota" data-id="${n.id}">Borrar</button></span></div></article>`; }).join('')}
+${abierta ? `<form class="row" data-s="nota" data-r="${id}" data-t="${tipo}"><input class="in" style="flex:1 1 220px;width:auto" name="texto" placeholder="Agregar a ${titulo.toLowerCase()} y apretar Enter" aria-label="Agregar en ${titulo}" required><button class="btn sec sm">Agregar</button></form>` : ''}</section>`).join('')}`;
   },
 
   equipo() {
@@ -440,9 +451,10 @@ ${t.bloqueo ? `<p class="err"><b>Traba:</b> ${esc(t.bloqueo)}</p>` : ''}
 <div class="fld">Colaboradores<div>${store.all('persona').sort(byNom).filter(p => p.id !== t.responsableId).map(p => `<label class="chk"><input type="checkbox" data-c="colab" data-id="${t.id}" value="${p.id}"${(t.colaboradores || []).includes(p.id) ? ' checked' : ''}>${esc(p.nombre)}</label>`).join('') || '<span class="mut">No hay más personas en el equipo.</span>'}</div></div>
 <label class="fld">Descripción${campo('descripcion', `<textarea class="in auto" rows="3" placeholder="Detalle, enlaces, lo que haga falta">${esc(t.descripcion)}</textarea>`)}</label>
 <button type="button" class="card row between" style="background:#f5f5f5;border:0;cursor:pointer;text-align:left" data-a="irOrigen" data-id="${t.id}"><span><span class="sec-t">Origen</span><br><b>${esc(origenTxt(t))}</b></span><span aria-hidden="true">›</span></button>
-<section class="col"><h2>Comentarios</h2>${cs.filter(c => !c.auto).map(c => `<div class="row" style="align-items:flex-start;flex-wrap:nowrap">${av(c.autor)}<div style="min-width:0"><span class="mut">${esc(nom(c.autor))} · ${fHora(c.fecha)}</span>${c.texto ? `<br><span style="white-space:pre-wrap">${esc(c.texto)}</span>` : ''}${adjHtml(c.adjuntos)}</div></div>`).join('') || vacio('Sin comentarios todavía.')}
+<section class="col"><h2>Comentarios</h2>${cs.filter(c => !c.auto).map(c => `<div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:8px"><div class="row" style="align-items:flex-start;flex-wrap:nowrap;gap:8px;flex:1;min-width:0">${av(c.autor)}<div style="min-width:0"><span class="mut">${esc(nom(c.autor))} · ${fHora(c.fecha)}</span>${c.texto ? `<div style="white-space:pre-wrap;margin-top:2px">${linky(c.texto)}</div>` : ''}${adjHtml(c.adjuntos)}</div></div>${c.autor === yo.id ? `<button type="button" class="x" style="width:28px;height:28px;font-size:16px" data-a="borrarComentario" data-id="${c.id}" aria-label="Borrar comentario">×</button>` : ''}</div>`).join('') || vacio('Sin comentarios todavía.')}
 ${ui.adjuntos.length ? `<div class="row">${ui.adjuntos.map((a, i) => `<span class="tag">${esc(a.nombre)} <button type="button" class="x" style="width:20px;height:20px;font-size:16px;vertical-align:middle" data-a="removeAdj" data-i="${i}" aria-label="Quitar ${esc(a.nombre)}">×</button></span>`).join('')}</div>` : ''}
-<form class="col" data-s="comentario" data-id="${t.id}"><div class="row" style="flex-wrap:nowrap"><input class="in" id="coment" name="texto" placeholder="Escribí un comentario" aria-label="Comentario"><button class="btn">Enviar</button></div>
+${store.all('persona').length ? `<div class="row" style="gap:6px">${store.all('persona').sort(byNom).map(pe => `<button type="button" class="pill sm" data-a="mencion" data-n="${esc(pe.nombre)}">@${esc(pe.nombre)}</button>`).join('')}</div>` : ''}
+<form class="col" data-s="comentario" data-id="${t.id}"><div class="row" style="flex-wrap:nowrap"><input class="in" id="coment" name="texto" placeholder="Escribí un comentario (podés arrobar con @ y pegar enlaces)" aria-label="Comentario"><button class="btn">Enviar</button></div>
 <label class="btn sec sm" style="align-self:flex-start;display:inline-flex;align-items:center">Adjuntar archivo<input type="file" multiple hidden data-c="adjuntar"></label></form></section>
 <section class="col" style="gap:4px"><h2>Historial</h2>${cs.filter(c => c.auto).reverse().map(c => `<span class="mut">${esc(nom(c.autor))} ${esc(c.texto)} · ${fHora(c.fecha)}</span>`).join('')}
 <span class="mut">Creada por ${esc(nom(t.creadoPor) || 'alguien')} · ${fHora(t.creado)}</span></section>
@@ -466,6 +478,7 @@ function camposTarea(pre) {
 <label class="fld">Prioridad<select class="in" name="prioridad">${opts(PRIOS, pre.prioridad || 'media')}</select></label>
 <label class="fld">Vencimiento<input class="in" type="date" name="vence" value="${esc(pre.vence || '')}"></label></div>
 <label class="fld">Campaña<select class="in" name="campanaId">${opts(campO(pre.campanaId), pre.campanaId, 'Sin campaña')}</select></label>
+<label class="fld">Descripción<textarea class="in auto" name="descripcion" rows="2" placeholder="Detalle, enlaces, lo que haga falta">${esc(pre.descripcion || '')}</textarea></label>
 <p class="mut">Solo el título es obligatorio. Lo demás se puede completar después.</p>`;
 }
 function modalTarea(titulo, pre, extra, onOk) {
@@ -480,14 +493,14 @@ function modalCargar() {
   const rs = store.all('reunion').filter(r => r.estado !== 'cerrada').sort((a, b) => b.fecha.localeCompare(a.fecha));
   const f = modal('Cargar', `<div class="seg" role="group" aria-label="Qué querés cargar">${[['tarea', 'Tarea'], ['pedido', 'Pedido'], ['nota', 'Nota']].map(([v, l], i) => `<button type="button" data-clase="${v}" class="${i ? '' : 'on'}"${v === 'nota' && !rs.length ? ' disabled title="No hay reuniones abiertas"' : ''}>${l}</button>`).join('')}</div>
 <input type="hidden" name="clase" value="tarea"><label class="fld"><span id="lbl-texto">Título de la tarea</span><input class="in" name="texto" required maxlength="300"></label>
-<div data-solo="tarea" class="g2"><label class="fld">Responsable<select class="in" name="responsableId">${opts(personasO(), '', 'Sin asignar')}</select></label><label class="fld">Vencimiento<input class="in" type="date" name="vence"></label></div>
-<label class="fld" data-solo="pedido" hidden>Origen<select class="in" name="origen"><option value="cliente">Pedido del cliente</option><option value="interno">Iniciativa interna</option></select></label>
-<div data-solo="nota" class="g2" hidden><label class="fld">Reunión<select class="in" name="reunionId">${opts(rs.map(r => [r.id, fFecha(r.fecha) + (r.motivo ? ' · ' + r.motivo : '')]), rs[0] && rs[0].id)}</select></label><label class="fld">Tipo<select class="in" name="tipoNota">${opts(TIPOS_NOTA.map(([v, l]) => [v, l]), 'acuerdo')}</select></label></div>
+<div data-solo="tarea" class="col"><div class="g2"><label class="fld">Responsable<select class="in" name="responsableId">${opts(personasO(), '', 'Sin asignar')}</select></label><label class="fld">Vencimiento<input class="in" type="date" name="vence"></label></div><label class="fld">Descripción<textarea class="in auto" name="descripcion" rows="2" placeholder="Detalle, enlaces, lo que haga falta"></textarea></label></div>
+<div data-solo="pedido" class="col" hidden><label class="fld">Origen<select class="in" name="origen"><option value="cliente">Pedido del cliente</option><option value="interno">Iniciativa interna</option></select></label><label class="fld">Descripción<textarea class="in auto" name="pdesc" rows="2" placeholder="Detalle del pedido (opcional)"></textarea></label></div>
+<div data-solo="nota" class="g2" hidden><label class="fld">Reunión<select class="in" name="reunionId">${opts(rs.map(r => [r.id, fFecha(r.fecha) + (r.motivo ? ' · ' + r.motivo : '')]), rs[0] && rs[0].id)}</select></label><label class="fld">Sección<select class="in" name="tipoNota">${opts(TIPOS_NOTA.map(([v, l]) => [v, l]), 'pedido')}</select></label></div>
 <p class="mut">Solo el texto es obligatorio.</p>`, d => {
     const texto = d.texto.trim(); if (!texto) return false;
-    if (d.clase === 'tarea') crearTarea({ titulo: texto, responsableId: d.responsableId, vence: d.vence });
-    else if (d.clase === 'pedido') store.save({ tipo: 'pedido', texto, origenTipo: d.origen, estado: 'nuevo', cargadoPor: yo.id, creado: ahora() });
-    else store.save({ tipo: 'nota', reunionId: d.reunionId, clase: d.tipoNota, texto, autor: yo.id, estado: 'pendiente', creado: ahora() });
+    if (d.clase === 'tarea') crearTarea({ titulo: texto, responsableId: d.responsableId, vence: d.vence, descripcion: d.descripcion });
+    else if (d.clase === 'pedido') store.save({ tipo: 'pedido', texto, descripcion: (d.pdesc || '').trim(), origenTipo: d.origen, estado: 'nuevo', cargadoPor: yo.id, creado: ahora() });
+    else store.save({ tipo: 'nota', reunionId: d.reunionId, clase: d.tipoNota, texto, autor: yo.id, seguimiento: 'pendiente', creado: ahora() });
     aviso('Cargado');
   });
   f.addEventListener('click', e => {
@@ -537,7 +550,23 @@ const acc = {
     if (r.tipo === 'nota') { r.estado = 'sin_accion'; store.save(r); return; }
     modal('Descartar pedido', `<label class="fld">Motivo<input class="in" name="motivo" required maxlength="200"></label>`, d => { r.estado = 'descartado'; r.motivo = d.motivo.trim(); store.save(r); }, 'Descartar');
   },
-  reabrir(el) { const r = P(el.dataset.id); r.estado = r.tipo === 'nota' ? 'pendiente' : 'nuevo'; r.motivo = ''; store.save(r); },
+  reabrir(el) { const r = P(el.dataset.id); r.estado = 'nuevo'; r.motivo = ''; store.save(r); },
+  borrarPedido(el) { if (confirm('¿Borrar este pedido?')) store.remove(el.dataset.id); },
+  borrarComentario(el) { if (confirm('¿Borrar este comentario?')) store.remove(el.dataset.id); },
+  mencion(el) { const i = document.getElementById('coment'); if (!i) return; i.value = (i.value.replace(/\s+$/, '') + ' @' + el.dataset.n + ' ').replace(/^\s+/, ''); i.focus(); },
+  descargarMinuta(el) {
+    const r = P(el.dataset.id); if (!r) return;
+    const notas = store.all('nota').filter(n => n.reunionId === r.id);
+    const secs = TIPOS_NOTA.map(([k, l]) => {
+      const ns = notas.filter(n => n.clase === k); if (!ns.length) return '';
+      return `<h2>${esc(l)}</h2>` + ns.map(n => `<div class="n"><b>${esc(n.texto)}</b> <i>(${esc(segLabel(n.seguimiento))})</i>${n.descripcion ? `<p>${esc(n.descripcion)}</p>` : ''}${tareasDe(n.id).length ? `<p class="t">Tareas: ${tareasDe(n.id).map(t => esc(t.titulo)).join('; ')}</p>` : ''}</div>`).join('');
+    }).join('');
+    const parts = (r.participantes || []).filter(P).map(x => esc(nom(x))).join(', ');
+    const w = window.open('', '_blank');
+    if (!w) return aviso('Permití las ventanas emergentes para descargar el PDF.');
+    w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Minuta ${esc(fFecha(r.fecha))}</title><style>body{font:14px/1.5 Arial,sans-serif;margin:40px;color:#111}h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;border-bottom:1px solid #ccc;padding-bottom:4px;margin:24px 0 8px}.sub{color:#555;margin:0 0 8px}.n{margin:10px 0}.n p{margin:2px 0 0;color:#444}.t{font-size:12px}i{color:#666}</style></head><body><h1>Minuta · ${esc(CONFIG.CLIENTE)} · ${esc(fFecha(r.fecha))}${r.motivo ? ' · ' + esc(r.motivo) : ''}</h1>${parts ? `<p class="sub">Participantes: ${parts}</p>` : ''}${secs || '<p>Sin anotaciones.</p>'}<script>window.onload=function(){window.print()}<\/script></body></html>`);
+    w.document.close();
+  },
   nuevaReunion() { formReunion(); },
   editarReunion(el) { formReunion(P(el.dataset.id)); },
   cerrarMinuta(el) { if (pendNotas(el.dataset.id)) return aviso('Quedan notas sin resolver.'); const r = P(el.dataset.id); r.estado = 'cerrada'; store.save(r); },
@@ -624,6 +653,8 @@ const cambios = {
       fr.readAsDataURL(file);
     });
   },
+  notaCampo(el) { const n = P(el.dataset.id); if (!n) return; n[el.dataset.k] = el.value; store.save(n); },
+  pedidoCampo(el) { const r = P(el.dataset.id); if (!r) return; r[el.dataset.k] = el.value; store.save(r); },
   filtro(el) { ui.f[el.dataset.k] = el.value; render(); },
   grupo(el) { ui.grupo = el.value; render(); },
   buscar(el) { ui.q = el.value.trim(); render(); },
@@ -636,7 +667,7 @@ const cambios = {
 };
 const envios = {
   pedido(f) { const texto = f.elements.texto.value.trim(); if (!texto) return; store.save({ tipo: 'pedido', texto, origenTipo: f.elements.origen.value, estado: 'nuevo', cargadoPor: yo.id, creado: ahora() }); ui.tab = 'nuevo'; ui.foco = '#nuevo-pedido'; },
-  nota(f) { const texto = f.elements.texto.value.trim(); if (!texto) return; store.save({ tipo: 'nota', reunionId: f.dataset.r, clase: f.dataset.t, texto, autor: yo.id, estado: 'pendiente', creado: ahora() }); ui.foco = `form[data-s="nota"][data-t="${f.dataset.t}"] input`; },
+  nota(f) { const texto = f.elements.texto.value.trim(); if (!texto) return; store.save({ tipo: 'nota', reunionId: f.dataset.r, clase: f.dataset.t, texto, autor: yo.id, seguimiento: 'pendiente', creado: ahora() }); ui.foco = `form[data-s="nota"][data-t="${f.dataset.t}"] input`; },
   comentario(f) { const texto = f.elements.texto.value.trim(); const adj = ui.adjuntos.slice(); if (!texto && !adj.length) return; store.save({ tipo: 'comentario', tareaId: f.dataset.id, autor: yo.id, fecha: ahora(), texto, auto: false, adjuntos: adj.length ? adj : undefined }); ui.adjuntos = []; ui.foco = '#coment'; }
 };
 
@@ -647,6 +678,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { if ($('#modal').innerHTML) cerrarModal(); else if (ui.tarea) { ui.tarea = null; render(); } }
   if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('kc')) { ui.tarea = e.target.dataset.id; render(); }
 });
+document.addEventListener('input', e => { if (e.target.classList && e.target.classList.contains('auto')) autosize(e.target); });
 document.addEventListener('focusout', () => { if (pend) setTimeout(() => { if (pend) render(true); }, 60); });
 document.addEventListener('dragstart', e => { const c = e.target.closest && e.target.closest('.kc'); if (c) e.dataTransfer.setData('text/plain', c.dataset.id); });
 document.addEventListener('dragover', e => { if (e.target.closest && e.target.closest('.kcol')) e.preventDefault(); });
